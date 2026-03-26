@@ -6,6 +6,7 @@ import requests
 import zipfile
 import io
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(
     page_title="COT Supplemental Dashboard",
@@ -24,7 +25,7 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
     border-bottom:1px solid #2a2e2b; padding-bottom:1rem; margin-bottom:1.5rem; }
 .dash-title { font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:500;
     color:#c8f5a0; letter-spacing:0.08em; text-transform:uppercase; }
-.dash-sub { font-size:12px; color:#5a6358; font-family:'IBM Plex Mono',monospace; letter-spacing:0.06em; }
+.dash-sub { font-size:12px; color:#5a6358; font-family:'IBM Plex Mono',monospace; }
 .metric-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:1.5rem; }
 .metric-card { background:#131714; border:1px solid #1f2420; border-radius:8px; padding:14px 16px; }
 .metric-label { font-size:10px; font-family:'IBM Plex Mono',monospace; color:#4a5248;
@@ -50,8 +51,6 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── KOMODITY — klíčová slova z CFTC Supplemental reportu ────────────────────
-# Přesné názvy: Market_and_Exchange_Names z dea_cit_txt souboru
 COMMODITIES = [
     {"name": "Pšenice SRW",   "keyword": "WHEAT-SRW"},
     {"name": "Pšenice HRW",   "keyword": "WHEAT-HRW"},
@@ -68,58 +67,50 @@ COMMODITIES = [
     {"name": "Feeder Cattle", "keyword": "FEEDER CATTLE"},
 ]
 
-# ── SPRÁVNÉ URL PRO SUPPLEMENTAL (CIT) ZIP SOUBORY ──────────────────────────
-# Zdroj: https://www.cftc.gov/MarketReports/CommitmentsofTraders/HistoricalCompressed/index.htm
-# Sekce: "Commodity Index Trader Supplement"
-# Formát: dea_cit_txt_YYYY.zip  (ne com_sup_txt!)
+# Pouze 2 ZIP soubory: historický balík + aktuální rok → rychlé načtení
+CURRENT_YEAR = datetime.now().year
 CIT_URLS = [
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2006_2016.zip",  # historická
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2017.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2018.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2019.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2020.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2021.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2022.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2023.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2024.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2025.zip",
-    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2026.zip",
+    "https://www.cftc.gov/files/dea/history/dea_cit_txt_2006_2016.zip",
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR}.zip",
+]
+# Přidej předchozí rok jako zálohu (pokud aktuální rok ještě nemá dost dat)
+PREV_YEAR = CURRENT_YEAR - 1
+CIT_URLS_EXTRA = [
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR - 1}.zip",
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR - 2}.zip",
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR - 3}.zip",
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR - 4}.zip",
+    f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{CURRENT_YEAR - 5}.zip",
 ]
 
-# Přesné názvy sloupců ze CFTC CIT Supplemental CSV:
-# Market_and_Exchange_Names, Report_Date_as_YYYY_MM_DD,
-# NonComm_Positions_Long_All, NonComm_Positions_Short_All,
-# NonComm_Postions_Spread_All  ← pozor: CFTC překlep "Postions"
-# Open_Interest_All
-
-@st.cache_data(ttl=3600 * 6, show_spinner=False)
-def fetch_cot_zip():
-    """Stáhne Supplemental CIT data přímo z CFTC ZIP souborů."""
-    dfs = []
-    for url in CIT_URLS:
-        try:
-            r = requests.get(url, timeout=30)
-            if r.status_code != 200:
-                continue
-            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-                for fname in z.namelist():
-                    if fname.lower().endswith((".txt", ".csv")):
-                        with z.open(fname) as f:
-                            try:
-                                df = pd.read_csv(f, low_memory=False)
-                                dfs.append(df)
-                            except Exception:
-                                pass
-        except Exception:
-            continue
-
-    if not dfs:
+def parse_zip(content):
+    """Parsuje ZIP obsah a vrátí DataFrame."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            for fname in z.namelist():
+                if fname.lower().endswith((".txt", ".csv")):
+                    with z.open(fname) as f:
+                        df = pd.read_csv(f, low_memory=False)
+                        return df
+    except Exception:
         return None
+    return None
 
-    combined = pd.concat(dfs, ignore_index=True)
+def download_zip(url):
+    """Stáhne jeden ZIP soubor."""
+    try:
+        r = requests.get(url, timeout=45, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            return r.content
+    except Exception:
+        pass
+    return None
 
-    # Normalizace názvů sloupců (strip whitespace, case-insensitive mapping)
-    col_lower = {c: c.strip().lower() for c in combined.columns}
+def normalize_df(df):
+    """Normalizuje sloupce a vypočítá net pozici."""
+    if df is None or df.empty:
+        return None
+    col_lower = {c: c.strip().lower().replace(" ", "_") for c in df.columns}
     rename = {}
     for orig, low in col_lower.items():
         if "market" in low and "exchange" in low:
@@ -132,21 +123,81 @@ def fetch_cot_zip():
             rename[orig] = "nc_short"
         elif "open_interest" in low and "all" in low:
             rename[orig] = "open_interest"
-
-    combined = combined.rename(columns=rename)
-
+    df = df.rename(columns=rename)
     required = ["market_name", "report_date", "nc_long", "nc_short"]
-    if not all(c in combined.columns for c in required):
+    if not all(c in df.columns for c in required):
+        return None
+    df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+    df["nc_long"]  = pd.to_numeric(df["nc_long"],  errors="coerce")
+    df["nc_short"] = pd.to_numeric(df["nc_short"], errors="coerce")
+    df["net"]      = df["nc_long"] - df["nc_short"]
+    df["market_upper"] = df["market_name"].str.upper().str.strip()
+    return df.dropna(subset=["report_date", "nc_long", "nc_short"])
+
+def fetch_via_socrata():
+    """Záložní metoda — CFTC Socrata API."""
+    url = "https://publicreporting.cftc.gov/resource/4zgm-a668.json"
+    params = {
+        "$limit": 50000,
+        "$order": "report_date_as_yyyy_mm_dd ASC",
+        "$select": "market_and_exchange_names,report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all,open_interest_all",
+    }
+    try:
+        r = requests.get(url, params=params, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return None
+        df = pd.DataFrame(data).rename(columns={
+            "market_and_exchange_names":   "market_name",
+            "report_date_as_yyyy_mm_dd":   "report_date",
+            "noncomm_positions_long_all":  "nc_long",
+            "noncomm_positions_short_all": "nc_short",
+            "open_interest_all":           "open_interest",
+        })
+        df["report_date"] = pd.to_datetime(df["report_date"], errors="coerce")
+        df["nc_long"]  = pd.to_numeric(df["nc_long"],  errors="coerce")
+        df["nc_short"] = pd.to_numeric(df["nc_short"], errors="coerce")
+        df["net"]      = df["nc_long"] - df["nc_short"]
+        df["market_upper"] = df["market_name"].str.upper().str.strip()
+        return df.dropna(subset=["report_date", "nc_long", "nc_short"])
+    except Exception:
         return None
 
-    combined["report_date"] = pd.to_datetime(combined["report_date"], errors="coerce")
-    combined["nc_long"]  = pd.to_numeric(combined["nc_long"],  errors="coerce")
-    combined["nc_short"] = pd.to_numeric(combined["nc_short"], errors="coerce")
-    combined["net"]      = combined["nc_long"] - combined["nc_short"]
-    combined["market_upper"] = combined["market_name"].str.upper().str.strip()
-    combined = combined.dropna(subset=["report_date", "nc_long", "nc_short"])
-    combined = combined.drop_duplicates(subset=["market_upper", "report_date"])
-    return combined.sort_values("report_date").reset_index(drop=True)
+@st.cache_data(ttl=3600 * 6, show_spinner=False)
+def fetch_all_cot():
+    """
+    Stáhne CIT Supplemental data paralelně.
+    Priorita: historický ZIP + roční ZIPy → Socrata API jako záloha.
+    """
+    # Všechny URL: historická + posledních 6 let
+    all_urls = [
+        "https://www.cftc.gov/files/dea/history/dea_cit_txt_2006_2016.zip",
+    ] + [
+        f"https://www.cftc.gov/files/dea/history/dea_cit_txt_{y}.zip"
+        for y in range(CURRENT_YEAR, CURRENT_YEAR - 6, -1)
+    ]
+
+    dfs = []
+    # Paralelní stahování — max 4 současně
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(download_zip, url): url for url in all_urls}
+        for future in as_completed(futures):
+            content = future.result()
+            if content:
+                df = parse_zip(content)
+                norm = normalize_df(df)
+                if norm is not None and not norm.empty:
+                    dfs.append(norm)
+
+    if dfs:
+        combined = pd.concat(dfs, ignore_index=True)
+        combined = combined.drop_duplicates(subset=["market_upper", "report_date"])
+        return combined.sort_values("report_date").reset_index(drop=True)
+
+    # Záloha: Socrata API
+    st.warning("ZIP soubory nedostupné, zkouším CFTC API…")
+    return fetch_via_socrata()
 
 
 def get_commodity_data(df, keyword):
@@ -173,22 +224,22 @@ def fmt_net(v):
 st.markdown(f"""
 <div class="dash-header">
   <div class="dash-title">📊 COT Supplemental · Non-Commercial</div>
-  <div class="dash-sub">CFTC CIT Supplement · ZIP download · {datetime.now().strftime('%d.%m.%Y %H:%M')}</div>
+  <div class="dash-sub">CFTC CIT Supplement · {datetime.now().strftime('%d.%m.%Y %H:%M')}</div>
 </div>
 """, unsafe_allow_html=True)
 
-# ── NAČTENÍ DAT ──────────────────────────────────────────────────────────────
 with st.spinner("Načítám Supplemental CIT data z CFTC…"):
-    df_all = fetch_cot_zip()
+    df_all = fetch_all_cot()
 
 if df_all is None or df_all.empty:
-    st.error("❌ Nepodařilo se načíst data z CFTC. Zkus obnovit stránku za chvíli.")
+    st.error("❌ Nepodařilo se načíst data ani z CFTC ZIP ani z API. Zkus obnovit stránku.")
+    st.info("Zdroj: https://www.cftc.gov/files/dea/history/dea_cit_txt_2026.zip")
     st.stop()
 
 last_date = df_all["report_date"].max()
 st.markdown(
     f"<div style='font-family:IBM Plex Mono,monospace;font-size:11px;color:#3a4038;margin-bottom:1.5rem'>"
-    f"Poslední report: {last_date.strftime('%d.%m.%Y')} · {len(df_all):,} záznamů · Cache 6h</div>",
+    f"Poslední report: {last_date.strftime('%d.%m.%Y')} · {len(df_all):,} záznamů · Cache: 6h</div>",
     unsafe_allow_html=True
 )
 
@@ -229,7 +280,7 @@ for c in COMMODITIES:
     })
 
 if not summary:
-    st.error("Žádná Supplemental CIT data nenalezena. Zkontroluj připojení.")
+    st.error("Žádná Supplemental CIT data nenalezena.")
     st.stop()
 
 # ── SUMMARY CARDS ─────────────────────────────────────────────────────────────
@@ -421,7 +472,7 @@ st.markdown("""
 <div style='margin-top:2.5rem;padding-top:1rem;border-top:1px solid #1a1e1b;
   font-family:IBM Plex Mono,monospace;font-size:10px;color:#2a2e2b;
   display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px'>
-  <span>Zdroj: CFTC Commodity Index Trader Supplement (dea_cit_txt) · cftc.gov · pátek ~15:30 EST</span>
+  <span>Zdroj: CFTC Commodity Index Trader Supplement · cftc.gov · pátek ~15:30 EST</span>
   <span>COT Index = (net − min) / (max − min) × 100 · Non-Commercial = Large Speculators</span>
 </div>
 """, unsafe_allow_html=True)
