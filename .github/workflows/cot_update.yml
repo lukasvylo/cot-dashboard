@@ -2,31 +2,28 @@ name: COT Data Update
 
 on:
   schedule:
-    # Každý pátek v 22:00 CET (21:00 UTC) — CFTC publikuje v 15:30 EST = 21:30 CET
     - cron: '0 21 * * 5'
   workflow_dispatch:
-    # Možnost spustit ručně tlačítkem na GitHubu
 
 jobs:
   update-cot-data:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repozitáře
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Nastav Python
+      - name: Python setup
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Instalace závislostí
+      - name: Install deps
         run: pip install requests pandas
 
-      - name: Spusť update_data.py
+      - name: Run update
         run: python update_data.py
 
-      - name: Commitni a pushni nová data
+      - name: Commit data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
