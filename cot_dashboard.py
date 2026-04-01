@@ -330,7 +330,7 @@ if "cot_detail" in st.session_state:
                             font=dict(family="IBM Plex Mono", size=11, color="#e8e4dc")))
         fig.update_xaxes(**ax)
         fig.update_yaxes(**ax)
-        fig.update_yaxes(range=[0,100], row=2, col=1,
+        fig.update_yaxes(range=[0,100], fixedrange=True, row=2, col=1,
             tickvals=[0,20,50,80,100], ticktext=["0","20 ▲","50","80 ▼","100"])
         fig.update_annotations(font=dict(family="IBM Plex Mono", size=11, color="#5a6358"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
