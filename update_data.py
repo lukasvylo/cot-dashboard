@@ -122,6 +122,8 @@ def main():
     out_dir = Path("data")
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "cot_supplemental.csv"
+    # Uloží datum vždy jako YYYY-MM-DD string
+    combined["Report_Date"] = combined["Report_Date"].dt.strftime("%Y-%m-%d")
     combined.to_csv(out_path, index=False)
 
     print(f"\n✅ Uloženo: {out_path}")
