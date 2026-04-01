@@ -266,44 +266,54 @@ if "cot_detail" in st.session_state:
                 del st.session_state["cot_detail"]
                 st.rerun()
 
-        sub    = det["data"]
-        idx_s  = det["idx_series"]
+        sub    = det["data"].copy()
+        idx_s  = det["idx_series"].copy()
         cutoff = sub["Report_Date"].max() - timedelta(weeks=lookback)
-        sp     = sub[sub["Report_Date"] >= cutoff]
-        ip     = idx_s[sub["Report_Date"] >= cutoff]
+        sp     = sub[sub["Report_Date"] >= cutoff].copy()
+        ip     = idx_s[sub["Report_Date"] >= cutoff].copy()
 
-        dates   = sp["Report_Date"].dt.strftime("%d.%m.%y").tolist()
+        # Použij datetime přímo — ne string formát
+        dates   = sp["Report_Date"].tolist()
         net_v   = sp["Net"].tolist()
         long_v  = sp["NonComm_Long"].tolist()
         short_n = [-v for v in sp["NonComm_Short"].tolist()]
         idx_v   = ip.tolist()
 
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-            row_heights=[0.55, 0.45], vertical_spacing=0.06,
+            row_heights=[0.5, 0.5], vertical_spacing=0.08,
             subplot_titles=["Net pozice Non-Commercial (Long − Short)",
                             f"COT Index · lookback {lb_label}"])
+
+        # Graf 1 — Net pozice jako bary
         fig.add_trace(go.Bar(x=dates, y=net_v,
             marker_color=["#7ed957" if v >= 0 else "#e05a3a" for v in net_v],
-            name="Net", hovertemplate="%{x}<br>Net: %{y:,.0f}<extra></extra>"), row=1, col=1)
+            name="Net", hovertemplate="%{x|%d.%m.%Y}<br>Net: %{y:,.0f}<extra></extra>"), row=1, col=1)
         fig.add_trace(go.Scatter(x=dates, y=long_v, mode="lines", name="Long",
-            line=dict(color="#7ed957", width=1, dash="dot"),
-            hovertemplate="%{x}<br>Long: %{y:,.0f}<extra></extra>"), row=1, col=1)
+            line=dict(color="#7ed957", width=1.5),
+            hovertemplate="%{x|%d.%m.%Y}<br>Long: %{y:,.0f}<extra></extra>"), row=1, col=1)
         fig.add_trace(go.Scatter(x=dates, y=short_n, mode="lines", name="Short (neg.)",
-            line=dict(color="#e05a3a", width=1, dash="dot"),
-            hovertemplate="%{x}<br>Short: %{y:,.0f}<extra></extra>"), row=1, col=1)
-        fig.add_hrect(y0=80, y1=100, fillcolor="rgba(224,90,58,0.07)", line_width=0, row=2, col=1)
-        fig.add_hrect(y0=0, y1=20, fillcolor="rgba(126,217,87,0.07)", line_width=0, row=2, col=1)
-        fig.add_hline(y=80, line_dash="dash", line_color="#e05a3a", line_width=0.8, row=2, col=1)
-        fig.add_hline(y=20, line_dash="dash", line_color="#7ed957", line_width=0.8, row=2, col=1)
-        fig.add_hline(y=50, line_dash="dot",  line_color="#2a2e2b", line_width=0.6, row=2, col=1)
+            line=dict(color="#e05a3a", width=1.5),
+            hovertemplate="%{x|%d.%m.%Y}<br>Short: %{y:,.0f}<extra></extra>"), row=1, col=1)
+
+        # Graf 2 — COT Index čárový
+        fig.add_hrect(y0=80, y1=100, fillcolor="rgba(224,90,58,0.10)", line_width=0, row=2, col=1)
+        fig.add_hrect(y0=0,  y1=20,  fillcolor="rgba(126,217,87,0.10)", line_width=0, row=2, col=1)
+        fig.add_hline(y=80, line_dash="dash", line_color="#e05a3a", line_width=1.0, row=2, col=1)
+        fig.add_hline(y=20, line_dash="dash", line_color="#7ed957", line_width=1.0, row=2, col=1)
+        fig.add_hline(y=50, line_dash="dot",  line_color="#3a4038", line_width=0.8, row=2, col=1)
+
+        # Barevný gradient čáry podle hodnoty — rozdělíme na bull/neu/bear segmenty
         fig.add_trace(go.Scatter(x=dates, y=idx_v, mode="lines",
-            line=dict(color="#c8f5a0", width=2), fill="tozeroy",
-            fillcolor="rgba(200,245,160,0.06)", name="COT Index",
-            hovertemplate="%{x}<br>Index: %{y:.1f}<extra></extra>"), row=2, col=1)
+            line=dict(color="#c8f5a0", width=2.5),
+            name="COT Index",
+            hovertemplate="%{x|%d.%m.%Y}<br>Index: %{y:.1f}<extra></extra>"), row=2, col=1)
+
+        # Aktuální hodnota jako bod
         cc = "#7ed957" if idx_v[-1] <= 20 else ("#e05a3a" if idx_v[-1] >= 80 else "#c8f5a0")
         fig.add_trace(go.Scatter(x=[dates[-1]], y=[idx_v[-1]], mode="markers",
-            marker=dict(color=cc, size=8, line=dict(color="#0d0f0e", width=2)),
-            name=f"Aktuálně: {idx_v[-1]:.0f}"), row=2, col=1)
+            marker=dict(color=cc, size=10, line=dict(color="#0d0f0e", width=2)),
+            name=f"Aktuálně: {idx_v[-1]:.0f}",
+            hovertemplate=f"%{{x|%d.%m.%Y}}<br>Index: {idx_v[-1]:.1f}<extra></extra>"), row=2, col=1)
         ax = dict(showgrid=True, gridcolor="#131714", color="#3a4038",
                   tickfont=dict(family="IBM Plex Mono", size=10, color="#3a4038"),
                   zeroline=True, zerolinecolor="#1f2420")
