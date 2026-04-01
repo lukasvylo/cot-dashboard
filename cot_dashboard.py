@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # ════════════════════════════════════════════════════════════════════
 # ⚙️  NASTAV TYTO DVĚ HODNOTY na svůj GitHub username a název repa
-GITHUB_USER = "lukasvyslo"      # ← změň
+GITHUB_USER = "lukasvylo"      # ← změň
 GITHUB_REPO = "cot-dashboard"             # ← změň (název repozitáře)
 # ════════════════════════════════════════════════════════════════════
 
@@ -78,27 +78,17 @@ COMMODITIES = [
 @st.cache_data(ttl=3600 * 6, show_spinner=False)
 def load_data():
     try:
-        df = pd.read_csv(DATA_URL)
-        # Zkus různé formáty datumu
-        df["Report_Date"] = pd.to_datetime(df["Report_Date"], infer_datetime_format=True, errors="coerce")
-        # Pokud selže, zkus explicitní formáty
-        bad = df["Report_Date"].isna()
-        if bad.any():
-            for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y%m%d"]:
-                try:
-                    df.loc[bad, "Report_Date"] = pd.to_datetime(df.loc[bad, "Report_Date_raw"], format=fmt, errors="coerce")
-                except Exception:
-                    pass
+        df = pd.read_csv(DATA_URL, parse_dates=["Report_Date"])
         df["NonComm_Long"]  = pd.to_numeric(df["NonComm_Long"],  errors="coerce")
         df["NonComm_Short"] = pd.to_numeric(df["NonComm_Short"], errors="coerce")
         df["Net"]           = df["NonComm_Long"] - df["NonComm_Short"]
         df["market_upper"]  = df["Market_and_Exchange_Names"].str.upper().str.strip()
         df = df.dropna(subset=["Report_Date", "NonComm_Long", "NonComm_Short"])
-        # Odstraň duplicity a seřaď
         df = df.drop_duplicates(subset=["market_upper", "Report_Date"])
         df = df.sort_values(["market_upper", "Report_Date"]).reset_index(drop=True)
         return df
     except Exception as e:
+        st.error(f"Chyba načítání: {e}")
         return None
 
 def get_commodity_data(df, keyword):
