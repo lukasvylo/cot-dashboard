@@ -1,10 +1,5 @@
 """
-update_data.py — spusť lokálně každý pátek po 21:30 CET (15:30 EST)
-Stáhne Supplemental CIT data z CFTC a uloží jako data/cot_supplemental.csv
-
-Použití:
-    pip install requests pandas
-    python update_data.py
+update_data.py — stáhne Supplemental CIT data z CFTC a uloží jako data/cot_supplemental.csv
 """
 
 import requests
@@ -34,57 +29,96 @@ def download_and_parse(url):
             for fname in z.namelist():
                 if fname.lower().endswith((".txt", ".csv")):
                     with z.open(fname) as f:
-                        return pd.read_csv(f, low_memory=False)
+                        df = pd.read_csv(f, low_memory=False)
+                        return df
     except Exception as e:
         print(f"  → Chyba: {e}")
+    return None
+
+def find_column(columns, *keywords):
+    """Najde sloupec který obsahuje všechna klíčová slova (case-insensitive)."""
+    for col in columns:
+        col_low = col.strip().lower()
+        if all(kw.lower() in col_low for kw in keywords):
+            return col
     return None
 
 def normalize(df):
     if df is None or df.empty:
         return None
-    col_map = {}
-    for c in df.columns:
-        low = c.strip().lower()
-        if "market" in low and "exchange" in low:
-            col_map[c] = "Market_and_Exchange_Names"
-        elif "report_date" in low and "yyyy" in low:
-            col_map[c] = "Report_Date"
-        elif "noncomm" in low and "long" in low and "all" in low:
-            col_map[c] = "NonComm_Long"
-        elif "noncomm" in low and "short" in low and "all" in low:
-            col_map[c] = "NonComm_Short"
-        elif "open_interest" in low and "all" in low:
-            col_map[c] = "Open_Interest"
-    df = df.rename(columns=col_map)
-    required = ["Market_and_Exchange_Names", "Report_Date", "NonComm_Long", "NonComm_Short"]
-    if not all(c in df.columns for c in required):
-        print("  → Chybí sloupce, přeskakuji")
+
+    cols = df.columns.tolist()
+
+    # Debug — vypíše všechny sloupce pro diagnostiku
+    print(f"  → Sloupce v souboru: {cols[:10]}...")
+
+    # Flexibilní hledání sloupců
+    col_market = find_column(cols, "market")
+    col_date   = find_column(cols, "date")
+    col_long   = find_column(cols, "noncomm", "long", "all")
+    col_short  = find_column(cols, "noncomm", "short", "all")
+
+    # Fallback pro datum
+    if not col_date:
+        col_date = find_column(cols, "report", "date")
+    if not col_date:
+        col_date = find_column(cols, "yyyy")
+
+    # Fallback pro long/short — zkus bez "all"
+    if not col_long:
+        col_long = find_column(cols, "noncomm", "long")
+    if not col_short:
+        col_short = find_column(cols, "noncomm", "short")
+
+    print(f"  → Nalezené sloupce: market={col_market}, date={col_date}, long={col_long}, short={col_short}")
+
+    if not all([col_market, col_date, col_long, col_short]):
+        print(f"  → Chybí sloupce, přeskakuji")
         return None
-    df["Report_Date"] = pd.to_datetime(df["Report_Date"], errors="coerce")
-    df["NonComm_Long"]  = pd.to_numeric(df["NonComm_Long"],  errors="coerce")
-    df["NonComm_Short"] = pd.to_numeric(df["NonComm_Short"], errors="coerce")
-    df["Net"] = df["NonComm_Long"] - df["NonComm_Short"]
-    return df[required + ["Net", "Open_Interest"]].dropna(subset=["Report_Date", "NonComm_Long", "NonComm_Short"])
+
+    result = pd.DataFrame({
+        "Market_and_Exchange_Names": df[col_market],
+        "Report_Date":               df[col_date],
+        "NonComm_Long":              pd.to_numeric(df[col_long],  errors="coerce"),
+        "NonComm_Short":             pd.to_numeric(df[col_short], errors="coerce"),
+    })
+
+    # Open Interest — volitelný
+    col_oi = find_column(cols, "open", "interest", "all")
+    if not col_oi:
+        col_oi = find_column(cols, "open_interest")
+    if col_oi:
+        result["Open_Interest"] = pd.to_numeric(df[col_oi], errors="coerce")
+    else:
+        result["Open_Interest"] = None
+
+    result["Report_Date"] = pd.to_datetime(result["Report_Date"], errors="coerce")
+    result["Net"] = result["NonComm_Long"] - result["NonComm_Short"]
+
+    result = result.dropna(subset=["Report_Date", "NonComm_Long", "NonComm_Short"])
+    return result
 
 def main():
     print(f"\n=== COT Supplemental Update — {datetime.now().strftime('%d.%m.%Y %H:%M')} ===\n")
     dfs = []
+
     for url in CIT_URLS:
         raw = download_and_parse(url)
         norm = normalize(raw)
         if norm is not None and not norm.empty:
             dfs.append(norm)
-            print(f"  → OK, {len(norm)} řádků")
+            print(f"  → OK, {len(norm)} řádků\n")
+        else:
+            print()
 
     if not dfs:
         print("\n❌ Žádná data nestažena.")
-        return
+        raise SystemExit(1)
 
     combined = pd.concat(dfs, ignore_index=True)
     combined = combined.drop_duplicates(subset=["Market_and_Exchange_Names", "Report_Date"])
     combined = combined.sort_values("Report_Date").reset_index(drop=True)
 
-    # Uloží do složky data/
     out_dir = Path("data")
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "cot_supplemental.csv"
@@ -93,7 +127,6 @@ def main():
     print(f"\n✅ Uloženo: {out_path}")
     print(f"   Celkem záznamů: {len(combined):,}")
     print(f"   Rozsah dat: {combined['Report_Date'].min().date()} → {combined['Report_Date'].max().date()}")
-    print(f"\n→ Nahraj data/cot_supplemental.csv na GitHub (git add data/cot_supplemental.csv && git commit -m 'update COT' && git push)")
 
 if __name__ == "__main__":
     main()
