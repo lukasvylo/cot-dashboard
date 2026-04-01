@@ -90,11 +90,12 @@ def load_data():
 
 def get_commodity_data(df, keyword):
     mask = df["market_upper"].str.contains(keyword.upper(), na=False)
-    return df[mask].drop_duplicates(subset=["Report_Date"]).sort_values("Report_Date").copy()
+    sub = df[mask].drop_duplicates(subset=["Report_Date"]).sort_values("Report_Date")
+    return sub.reset_index(drop=True).copy()
 
 def cot_index(series, lookback_weeks):
-    vals   = series.values
-    result = pd.Series(index=series.index, dtype=float)
+    vals   = series.reset_index(drop=True).values
+    result = pd.Series(index=range(len(vals)), dtype=float)
     for i in range(len(vals)):
         start  = max(0, i - lookback_weeks + 1)
         window = vals[start:i+1]
@@ -266,11 +267,12 @@ if "cot_detail" in st.session_state:
                 del st.session_state["cot_detail"]
                 st.rerun()
 
-        sub    = det["data"].copy()
-        idx_s  = det["idx_series"].copy()
+        sub    = det["data"].reset_index(drop=True).copy()
+        idx_s  = det["idx_series"].reset_index(drop=True).copy()
         cutoff = sub["Report_Date"].max() - timedelta(weeks=lookback)
-        sp     = sub[sub["Report_Date"] >= cutoff].copy()
-        ip     = idx_s[sub["Report_Date"] >= cutoff].copy()
+        mask   = sub["Report_Date"] >= cutoff
+        sp     = sub[mask].reset_index(drop=True).copy()
+        ip     = idx_s[mask].reset_index(drop=True).copy()
 
         # Použij datetime přímo — ne string formát
         dates   = sp["Report_Date"].tolist()
