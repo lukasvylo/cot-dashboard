@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # ════════════════════════════════════════════════════════════════════
 # ⚙️  NASTAV TYTO DVĚ HODNOTY na svůj GitHub username a název repa
-GITHUB_USER = "lukasvylo"      # ← změň
+GITHUB_USER = "lukasvyslo"      # ← změň
 GITHUB_REPO = "cot-dashboard"             # ← změň (název repozitáře)
 # ════════════════════════════════════════════════════════════════════
 
@@ -327,11 +327,19 @@ if "cot_detail" in st.session_state:
             legend=dict(font=dict(family="IBM Plex Mono", size=10, color="#5a6358"),
                         bgcolor="rgba(0,0,0,0)", orientation="h", y=1.02),
             hoverlabel=dict(bgcolor="#131714", bordercolor="#2a2e2b",
-                            font=dict(family="IBM Plex Mono", size=11, color="#e8e4dc")))
+                            font=dict(family="IBM Plex Mono", size=11, color="#e8e4dc")),
+            yaxis2=dict(range=[0, 100], fixedrange=True,
+                tickvals=[0, 20, 50, 80, 100],
+                ticktext=["0", "20 ▲", "50", "80 ▼", "100"],
+                showgrid=True, gridcolor="#131714", color="#3a4038",
+                tickfont=dict(family="IBM Plex Mono", size=10, color="#3a4038")))
         fig.update_xaxes(**ax)
         fig.update_yaxes(**ax)
-        fig.update_yaxes(range=[0,100], fixedrange=True, row=2, col=1,
-            tickvals=[0,20,50,80,100], ticktext=["0","20 ▲","50","80 ▼","100"])
+        # Přepíše row=2 po obecném nastavení — musí být jako poslední
+        fig.update_yaxes(range=[0, 100], fixedrange=True,
+            tickvals=[0, 20, 50, 80, 100],
+            ticktext=["0", "20 ▲", "50", "80 ▼", "100"],
+            row=2, col=1)
         fig.update_annotations(font=dict(family="IBM Plex Mono", size=11, color="#5a6358"))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
