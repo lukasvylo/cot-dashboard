@@ -18,6 +18,12 @@ CIT_URLS = [
     for y in range(CURRENT_YEAR, 2016, -1)
 ]
 
+# Přesné názvy sloupců z CFTC CIT Supplemental souboru
+# (ověřeno z logu GitHub Actions)
+# Datum: 'As_of_Date_In_Form_YYYY-MM-DD' nebo 'As of Date In Form YYYY-MM-DD'
+# Long:  'NComm_Positions_Long_All_NoCIT' nebo 'NComm Positions Long All NoCIT'
+# Short: 'NComm_Positions_Short_All_NoCIT' nebo 'NComm Positions Short All NoCIT'
+
 def download_and_parse(url):
     print(f"  Stahuji: {url}")
     try:
@@ -30,17 +36,21 @@ def download_and_parse(url):
                 if fname.lower().endswith((".txt", ".csv")):
                     with z.open(fname) as f:
                         df = pd.read_csv(f, low_memory=False)
+                        # Normalizuj názvy sloupců — odstraň mezery, pomlčky → podtržítka
+                        df.columns = [c.strip().replace(" ", "_").replace("-", "_") for c in df.columns]
                         return df
     except Exception as e:
         print(f"  → Chyba: {e}")
     return None
 
-def find_column(columns, *keywords):
-    """Najde sloupec který obsahuje všechna klíčová slova (case-insensitive)."""
+def find_col(columns, *must_contain, must_not_contain=None):
+    """Najde sloupec který obsahuje všechna klíčová slova a neobsahuje zakázaná."""
+    must_not_contain = must_not_contain or []
     for col in columns:
-        col_low = col.strip().lower()
-        if all(kw.lower() in col_low for kw in keywords):
-            return col
+        cl = col.lower()
+        if all(k.lower() in cl for k in must_contain):
+            if not any(k.lower() in cl for k in must_not_contain):
+                return col
     return None
 
 def normalize(df):
@@ -48,53 +58,51 @@ def normalize(df):
         return None
 
     cols = df.columns.tolist()
+    print(f"  → Sloupce: {cols[:12]}...")
 
-    # Debug — vypíše všechny sloupce pro diagnostiku
-    print(f"  → Sloupce v souboru: {cols[:10]}...")
+    # Market name
+    col_market = find_col(cols, "market", "exchange")
+    if not col_market:
+        col_market = find_col(cols, "market")
 
-    # Flexibilní hledání sloupců
-    col_market = find_column(cols, "market")
-    col_date   = find_column(cols, "date")
-    col_long   = find_column(cols, "noncomm", "long", "all")
-    col_short  = find_column(cols, "noncomm", "short", "all")
-
-    # Fallback pro datum
+    # Datum — preferuj YYYY-MM-DD formát
+    col_date = find_col(cols, "yyyy_mm_dd")
     if not col_date:
-        col_date = find_column(cols, "report", "date")
-    if not col_date:
-        col_date = find_column(cols, "yyyy")
+        col_date = find_col(cols, "date")
 
-    # Fallback pro long/short — zkus bez "all"
+    # Long pozice — NComm_Positions_Long_All_NoCIT (ne Change!)
+    col_long = find_col(cols, "ncomm", "long", "all", must_not_contain=["change", "chng"])
     if not col_long:
-        col_long = find_column(cols, "noncomm", "long")
-    if not col_short:
-        col_short = find_column(cols, "noncomm", "short")
+        col_long = find_col(cols, "noncomm", "long", "all", must_not_contain=["change", "chng"])
 
-    print(f"  → Nalezené sloupce: market={col_market}, date={col_date}, long={col_long}, short={col_short}")
+    # Short pozice — NComm_Positions_Short_All_NoCIT (ne Change!)
+    col_short = find_col(cols, "ncomm", "short", "all", must_not_contain=["change", "chng"])
+    if not col_short:
+        col_short = find_col(cols, "noncomm", "short", "all", must_not_contain=["change", "chng"])
+
+    print(f"  → Mapování: market={col_market}, date={col_date}, long={col_long}, short={col_short}")
 
     if not all([col_market, col_date, col_long, col_short]):
         print(f"  → Chybí sloupce, přeskakuji")
         return None
 
     result = pd.DataFrame({
-        "Market_and_Exchange_Names": df[col_market],
-        "Report_Date":               df[col_date],
+        "Market_and_Exchange_Names": df[col_market].astype(str).str.strip(),
+        "Report_Date":               pd.to_datetime(df[col_date], errors="coerce"),
         "NonComm_Long":              pd.to_numeric(df[col_long],  errors="coerce"),
         "NonComm_Short":             pd.to_numeric(df[col_short], errors="coerce"),
     })
 
     # Open Interest — volitelný
-    col_oi = find_column(cols, "open", "interest", "all")
+    col_oi = find_col(cols, "open_interest_all")
     if not col_oi:
-        col_oi = find_column(cols, "open_interest")
+        col_oi = find_col(cols, "open", "interest")
     if col_oi:
         result["Open_Interest"] = pd.to_numeric(df[col_oi], errors="coerce")
     else:
         result["Open_Interest"] = None
 
-    result["Report_Date"] = pd.to_datetime(result["Report_Date"], errors="coerce")
     result["Net"] = result["NonComm_Long"] - result["NonComm_Short"]
-
     result = result.dropna(subset=["Report_Date", "NonComm_Long", "NonComm_Short"])
     return result
 
@@ -117,18 +125,22 @@ def main():
 
     combined = pd.concat(dfs, ignore_index=True)
     combined = combined.drop_duplicates(subset=["Market_and_Exchange_Names", "Report_Date"])
-    combined = combined.sort_values("Report_Date").reset_index(drop=True)
+    combined = combined.sort_values(["Market_and_Exchange_Names", "Report_Date"]).reset_index(drop=True)
+
+    # Uloží datum jako YYYY-MM-DD string — jednoznačný formát
+    combined["Report_Date"] = combined["Report_Date"].dt.strftime("%Y-%m-%d")
 
     out_dir = Path("data")
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "cot_supplemental.csv"
-    # Uloží datum vždy jako YYYY-MM-DD string
-    combined["Report_Date"] = combined["Report_Date"].dt.strftime("%Y-%m-%d")
     combined.to_csv(out_path, index=False)
+
+    min_date = combined["Report_Date"].min()
+    max_date = combined["Report_Date"].max()
 
     print(f"\n✅ Uloženo: {out_path}")
     print(f"   Celkem záznamů: {len(combined):,}")
-    print(f"   Rozsah dat: {combined['Report_Date'].min().date()} → {combined['Report_Date'].max().date()}")
+    print(f"   Rozsah dat: {min_date} → {max_date}")
 
 if __name__ == "__main__":
     main()
