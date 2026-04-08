@@ -56,6 +56,21 @@ html, body, [class*="css"] { font-family: 'IBM Plex Sans', sans-serif; }
 .stButton > button:hover { border-color:#c8f5a0 !important; color:#c8f5a0 !important; background:#0d150a !important; }
 #MainMenu, footer, header { visibility:hidden; }
 .stDeployButton { display:none; }
+.barchart-table { width:100%; border-collapse:collapse; font-size:12px; margin-top:0.5rem; }
+.barchart-table th { font-family:'IBM Plex Mono',monospace; font-size:9px; text-transform:uppercase;
+    letter-spacing:0.1em; color:#3a4038; padding:6px 10px; text-align:right;
+    border-bottom:1px solid #1a1e1b; font-weight:500; }
+.barchart-table th:first-child { text-align:left; }
+.barchart-table td { font-family:'IBM Plex Mono',monospace; font-size:12px;
+    padding:7px 10px; text-align:right; color:#c8c4bc;
+    border-bottom:1px solid #0f1210; }
+.barchart-table td:first-child { text-align:left; font-family:'IBM Plex Sans',sans-serif;
+    font-weight:500; font-size:13px; color:#e8e4dc; }
+.barchart-table tr:hover td { background:#131714; }
+.cell-high { color:#7ed957 !important; font-weight:500; }
+.cell-low  { color:#e05a3a !important; font-weight:500; }
+.cell-pos  { color:#7ed957; }
+.cell-neg  { color:#e05a3a; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -183,6 +198,82 @@ for c in COMMODITIES:
 if not summary:
     st.error("Žádná data pro zobrazené komodity.")
     st.stop()
+
+# ── BARCHART STYLE TABULKA ───────────────────────────────────────────────────
+def build_barchart_table(summary, df_all, lookback):
+    """Sestaví Barchart-style tabulku s posledními 6 týdny a 52W high/low."""
+    rows = []
+    for r in sorted(summary, key=lambda x: x["name"]):
+        sub = r["data"]
+        # 52W high/low
+        w52 = sub[sub["Report_Date"] >= sub["Report_Date"].max() - pd.Timedelta(weeks=52)]
+        high_52 = float(w52["Net"].max()) if not w52.empty else None
+        low_52  = float(w52["Net"].min()) if not w52.empty else None
+        # Posledních 6 týdnů
+        last6 = sub[["Report_Date", "Net"]].tail(6).reset_index(drop=True)
+        rows.append({
+            "name":    r["name"],
+            "key":     r["key"],
+            "high_52": high_52,
+            "low_52":  low_52,
+            "last6":   last6,
+            "cot_idx": r["cot_index"],
+        })
+    return rows
+
+st.markdown('<div class="section-title">Přehledová tabulka · Non-Commercial Net pozice</div>', unsafe_allow_html=True)
+
+tbl_rows = build_barchart_table(summary, df_all, lookback)
+
+# Získej data posledních 6 týdnů — zjisti datumy z prvního řádku
+all_dates = tbl_rows[0]["last6"]["Report_Date"].tolist() if tbl_rows else []
+date_headers = [d.strftime("%d.%m.%y") for d in all_dates]
+
+# Sestav HTML tabulku
+th_dates = "".join([f"<th>{d}</th>" for d in date_headers])
+html = f"""
+<table class="barchart-table">
+<thead><tr>
+  <th>Komodita</th>
+  <th>52W High</th>
+  <th>52W Low</th>
+  {th_dates}
+  <th>COT Idx</th>
+</tr></thead>
+<tbody>
+"""
+
+for row in tbl_rows:
+    net_vals = row["last6"]["Net"].tolist()
+    high = row["high_52"]
+    low  = row["low_52"]
+    idx  = row["cot_idx"]
+    idx_color = "#7ed957" if idx <= 20 else ("#e05a3a" if idx >= 80 else "#c8c4bc")
+
+    def fmt(v):
+        if v is None: return "—"
+        return f"{v/1000:+.1f}k" if abs(v) >= 1000 else f"{v:+.0f}"
+
+    def cell(v, high, low):
+        f = fmt(v)
+        if high is not None and abs(v - high) < 1:
+            return f'<td class="cell-high">{f} ▲</td>'
+        if low is not None and abs(v - low) < 1:
+            return f'<td class="cell-low">{f} ▼</td>'
+        cls = "cell-pos" if v >= 0 else "cell-neg"
+        return f'<td class="{cls}">{f}</td>'
+
+    cells = "".join([cell(v, high, low) for v in net_vals])
+    html += f"""<tr>
+  <td>{row["name"]}</td>
+  <td class="cell-high">{fmt(high)}</td>
+  <td class="cell-low">{fmt(low)}</td>
+  {cells}
+  <td style="color:{idx_color};font-weight:500">{idx:.0f}</td>
+</tr>"""
+
+html += "</tbody></table>"
+st.markdown(html, unsafe_allow_html=True)
 
 # ── SUMMARY CARDS ─────────────────────────────────────────────────────────────
 bulls    = sum(1 for r in summary if r["cot_index"] <= 20)
