@@ -230,9 +230,9 @@ for r in sorted(summary, key=lambda x: x["name"]):
     def td(v, hi, lo):
         f = fmt_v(v)
         if hi is not None and abs(v - hi) <= tol:
-            return f'<td class="cell-high">{f} ▲</td>'
+            return f'<td class="cell-low">{f} ▲</td>'  # High = BEARISH = cervena
         if lo is not None and abs(v - lo) <= tol:
-            return f'<td class="cell-low">{f} ▼</td>'
+            return f'<td class="cell-high">{f} ▼</td>'  # Low = BULLISH = zelena
         c = "cell-pos" if v >= 0 else "cell-neg"
         return f'<td class="{c}">{f}</td>'
 
@@ -248,15 +248,15 @@ for r in sorted(summary, key=lambda x: x["name"]):
     # High = zelená jen pokud je hodnota nejvyšší za rok (bez ohledu na znaménko)
     # Low = červená jen pokud je hodnota nejnižší za rok
     row_bg = ""
-    if hi52 is not None and abs(last_n - hi52) <= tol:
-        row_bg = "background:#0d2010;"
-    elif lo52 is not None and abs(last_n - lo52) <= tol:
-        row_bg = "background:#1a0a08;"
+    if lo52 is not None and abs(last_n - lo52) <= tol:
+        row_bg = "background:#0d2010;"  # zelena = Low = BULLISH
+    elif hi52 is not None and abs(last_n - hi52) <= tol:
+        row_bg = "background:#1a0a08;"  # cervena = High = BEARISH
 
     html_rows += f"""<tr style="{row_bg}">
   <td>{r["name"]}</td>
-  <td class="cell-high">{fmt_v(hi52)}</td>
-  <td class="cell-low">{fmt_v(lo52)}</td>
+  <td class="cell-low">{fmt_v(hi52)}</td>
+  <td class="cell-high">{fmt_v(lo52)}</td>
   {cells}
 </tr>"""
 
@@ -272,8 +272,8 @@ html_table = f"""
 </table>
 <div style='margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:10px;color:#3a4038;
   display:flex;gap:20px'>
-  <span><span style='color:#7ed957'>▲ 52W High</span></span>
-  <span><span style='color:#e05a3a'>▼ 52W Low</span></span>
+  <span><span style='color:#7ed957'>▼ 52W Low = BULLISH (spekulanti přeprodáni)</span></span>
+  <span><span style='color:#e05a3a'>▲ 52W High = BEARISH (spekulanti překoupeni)</span></span>
   <span>Net = Non-Commercial Long − Short · Supplemental CIT</span>
 </div>
 <div style='margin-bottom:1.5rem'></div>
