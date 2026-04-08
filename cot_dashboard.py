@@ -226,11 +226,12 @@ for r in sorted(summary, key=lambda x: x["name"]):
             return "—"
         return f"{v/1000:+.1f}k" if abs(v) >= 1000 else f"{v:+.0f}"
 
+    tol = max(500, abs((hi52 or 0) - (lo52 or 0)) * 0.015)
     def td(v, hi, lo):
         f = fmt_v(v)
-        if hi is not None and abs(v - hi) < 0.5:
+        if hi is not None and abs(v - hi) <= tol:
             return f'<td class="cell-high">{f} ▲</td>'
-        if lo is not None and abs(v - lo) < 0.5:
+        if lo is not None and abs(v - lo) <= tol:
             return f'<td class="cell-low">{f} ▼</td>'
         c = "cell-pos" if v >= 0 else "cell-neg"
         return f'<td class="{c}">{f}</td>'
@@ -243,10 +244,13 @@ for r in sorted(summary, key=lambda x: x["name"]):
         else:
             cells += '<td style="color:#3a4038">—</td>'
 
+    # Podbarvení řádku jen pokud je aktuální hodnota na 52W High nebo Low
+    # High = zelená jen pokud je hodnota nejvyšší za rok (bez ohledu na znaménko)
+    # Low = červená jen pokud je hodnota nejnižší za rok
     row_bg = ""
-    if hi52 is not None and abs(last_n - hi52) < 0.5:
+    if hi52 is not None and abs(last_n - hi52) <= tol:
         row_bg = "background:#0d2010;"
-    elif lo52 is not None and abs(last_n - lo52) < 0.5:
+    elif lo52 is not None and abs(last_n - lo52) <= tol:
         row_bg = "background:#1a0a08;"
 
     html_rows += f"""<tr style="{row_bg}">
