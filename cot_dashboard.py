@@ -200,80 +200,82 @@ if not summary:
     st.stop()
 
 # ── BARCHART STYLE TABULKA ───────────────────────────────────────────────────
-def build_barchart_table(summary, df_all, lookback):
-    """Sestaví Barchart-style tabulku s posledními 6 týdny a 52W high/low."""
-    rows = []
-    for r in sorted(summary, key=lambda x: x["name"]):
-        sub = r["data"]
-        # 52W high/low
-        w52 = sub[sub["Report_Date"] >= sub["Report_Date"].max() - pd.Timedelta(weeks=52)]
-        high_52 = float(w52["Net"].max()) if not w52.empty else None
-        low_52  = float(w52["Net"].min()) if not w52.empty else None
-        # Posledních 6 týdnů
-        last6 = sub[["Report_Date", "Net"]].tail(6).reset_index(drop=True)
-        rows.append({
-            "name":    r["name"],
-            "key":     r["key"],
-            "high_52": high_52,
-            "low_52":  low_52,
-            "last6":   last6,
-            "cot_idx": r["cot_index"],
-        })
-    return rows
+st.markdown('<div class="section-title">Non-Commercial · Net pozice · Supplemental Report</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Přehledová tabulka · Non-Commercial Net pozice</div>', unsafe_allow_html=True)
+# Posledních 6 reportních dat — společná osa pro všechny komodity
+all_dates_set = set()
+for r in summary:
+    for d in r["data"]["Report_Date"].tolist():
+        all_dates_set.add(d)
+last6_dates = sorted(all_dates_set)[-6:]
+date_headers = [d.strftime("%d.%m.%y") for d in last6_dates]
 
-tbl_rows = build_barchart_table(summary, df_all, lookback)
-
-# Získej data posledních 6 týdnů — zjisti datumy z prvního řádku
-all_dates = tbl_rows[0]["last6"]["Report_Date"].tolist() if tbl_rows else []
-date_headers = [d.strftime("%d.%m.%y") for d in all_dates]
-
-# Sestav HTML tabulku
 th_dates = "".join([f"<th>{d}</th>" for d in date_headers])
-html = f"""
+html_rows = ""
+
+for r in sorted(summary, key=lambda x: x["name"]):
+    sub = r["data"]
+    cutoff_52w = sub["Report_Date"].max() - pd.Timedelta(weeks=52)
+    w52    = sub[sub["Report_Date"] >= cutoff_52w]["Net"]
+    hi52   = float(w52.max()) if not w52.empty else None
+    lo52   = float(w52.min()) if not w52.empty else None
+    last_n = float(sub["Net"].iloc[-1])
+
+    def fmt_v(v):
+        if v is None:
+            return "—"
+        return f"{v/1000:+.1f}k" if abs(v) >= 1000 else f"{v:+.0f}"
+
+    def td(v, hi, lo):
+        f = fmt_v(v)
+        if hi is not None and abs(v - hi) < 0.5:
+            return f'<td class="cell-high">{f} ▲</td>'
+        if lo is not None and abs(v - lo) < 0.5:
+            return f'<td class="cell-low">{f} ▼</td>'
+        c = "cell-pos" if v >= 0 else "cell-neg"
+        return f'<td class="{c}">{f}</td>'
+
+    cells = ""
+    for d in last6_dates:
+        match = sub[sub["Report_Date"] == d]
+        if not match.empty:
+            cells += td(float(match["Net"].iloc[0]), hi52, lo52)
+        else:
+            cells += '<td style="color:#3a4038">—</td>'
+
+    row_bg = ""
+    if hi52 is not None and abs(last_n - hi52) < 0.5:
+        row_bg = "background:#0d2010;"
+    elif lo52 is not None and abs(last_n - lo52) < 0.5:
+        row_bg = "background:#1a0a08;"
+
+    html_rows += f"""<tr style="{row_bg}">
+  <td>{r["name"]}</td>
+  <td class="cell-high">{fmt_v(hi52)}</td>
+  <td class="cell-low">{fmt_v(lo52)}</td>
+  {cells}
+</tr>"""
+
+html_table = f"""
 <table class="barchart-table">
 <thead><tr>
   <th>Komodita</th>
   <th>52W High</th>
   <th>52W Low</th>
   {th_dates}
-  <th>COT Idx</th>
 </tr></thead>
-<tbody>
+<tbody>{html_rows}</tbody>
+</table>
+<div style='margin-top:0.5rem;font-family:IBM Plex Mono,monospace;font-size:10px;color:#3a4038;
+  display:flex;gap:20px'>
+  <span><span style='color:#7ed957'>▲ 52W High</span></span>
+  <span><span style='color:#e05a3a'>▼ 52W Low</span></span>
+  <span>Net = Non-Commercial Long − Short · Supplemental CIT</span>
+</div>
+<div style='margin-bottom:1.5rem'></div>
 """
+st.markdown(html_table, unsafe_allow_html=True)
 
-for row in tbl_rows:
-    net_vals = row["last6"]["Net"].tolist()
-    high = row["high_52"]
-    low  = row["low_52"]
-    idx  = row["cot_idx"]
-    idx_color = "#7ed957" if idx <= 20 else ("#e05a3a" if idx >= 80 else "#c8c4bc")
-
-    def fmt(v):
-        if v is None: return "—"
-        return f"{v/1000:+.1f}k" if abs(v) >= 1000 else f"{v:+.0f}"
-
-    def cell(v, high, low):
-        f = fmt(v)
-        if high is not None and abs(v - high) < 1:
-            return f'<td class="cell-high">{f} ▲</td>'
-        if low is not None and abs(v - low) < 1:
-            return f'<td class="cell-low">{f} ▼</td>'
-        cls = "cell-pos" if v >= 0 else "cell-neg"
-        return f'<td class="{cls}">{f}</td>'
-
-    cells = "".join([cell(v, high, low) for v in net_vals])
-    html += f"""<tr>
-  <td>{row["name"]}</td>
-  <td class="cell-high">{fmt(high)}</td>
-  <td class="cell-low">{fmt(low)}</td>
-  {cells}
-  <td style="color:{idx_color};font-weight:500">{idx:.0f}</td>
-</tr>"""
-
-html += "</tbody></table>"
-st.markdown(html, unsafe_allow_html=True)
 
 # ── SUMMARY CARDS ─────────────────────────────────────────────────────────────
 bulls    = sum(1 for r in summary if r["cot_index"] <= 20)
