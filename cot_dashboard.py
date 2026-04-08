@@ -313,6 +313,10 @@ if "cot_detail" in st.session_state:
             name="COT Index",
             hovertemplate="%{x|%d.%m.%Y}<br>Index: %{y:.1f}<extra></extra>"), row=2, col=1)
 
+        # Neviditelné body na 0 a 100 aby osa byla vždy celá
+        fig.add_trace(go.Scatter(x=[dates[0], dates[0]], y=[0, 100], mode="markers",
+            marker=dict(color="rgba(0,0,0,0)", size=1),
+            showlegend=False, hoverinfo="skip"), row=2, col=1)
         # Aktuální hodnota jako bod
         cc = "#7ed957" if idx_v[-1] <= 20 else ("#e05a3a" if idx_v[-1] >= 80 else "#c8f5a0")
         fig.add_trace(go.Scatter(x=[dates[-1]], y=[idx_v[-1]], mode="markers",
