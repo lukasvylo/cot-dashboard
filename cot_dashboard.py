@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # ════════════════════════════════════════════════════════════════════
 # ⚙️  NASTAV TYTO DVĚ HODNOTY na svůj GitHub username a název repa
-GITHUB_USER = "tvuj-github-username"      # ← změň
+GITHUB_USER = "lukasvylo"      # ← změň
 GITHUB_REPO = "cot-dashboard"             # ← změň (název repozitáře)
 # ════════════════════════════════════════════════════════════════════
 
