@@ -199,8 +199,8 @@ if not summary:
     st.error("Žádná data pro zobrazené komodity.")
     st.stop()
 
-# ── BARCHART STYLE TABULKA ───────────────────────────────────────────────────
-st.markdown('<div class="section-title">Non-Commercial · Net pozice · Supplemental Report</div>', unsafe_allow_html=True)
+# ── COT TABULKA ───────────────────────────────────────────────────
+st.markdown('<div class="section-title">COT Tabulka · Non-Commercial Net pozice</div>', unsafe_allow_html=True)
 
 # Posledních 6 reportních dat — společná osa pro všechny komodity
 all_dates_set = set()
@@ -461,6 +461,154 @@ if "cot_detail" in st.session_state:
                   <div style='font-family:IBM Plex Mono,monospace;font-size:15px;color:{vc}'>{val}</div>
                   <div class="metric-sub">{sub_v}</div>
                 </div>""", unsafe_allow_html=True)
+
+
+# ── SEASONAL TENDENCIES ───────────────────────────────────────────────────────
+st.markdown('<div class="section-title" style="margin-top:2rem">Seasonal Tendencies · průměrný výnos v průběhu roku</div>', unsafe_allow_html=True)
+
+SEASONAL_TICKERS = {
+    "Pšenice SRW":   "ZW=F",
+    "Pšenice HRW":   "KE=F",
+    "Kukuřice":      "ZC=F",
+    "Sója":          "ZS=F",
+    "Sójový olej":   "ZL=F",
+    "Sójový šrot":   "ZM=F",
+    "Živý skot":     "LE=F",
+    "Vepřové":       "HE=F",
+    "Káva":          "KC=F",
+    "Kakao":         "CC=F",
+    "Cukr č.11":     "SB=F",
+    "Bavlna č.2":    "CT=F",
+    "Feeder Cattle": "GF=F",
+}
+
+SEASONAL_YEARS  = [2, 5, 10, 15, 20]
+SEASONAL_COLORS = {2: "#e05a3a", 5: "#f0a030", 10: "#c8f5a0", 15: "#7ed957", 20: "#3a9e55"}
+
+@st.cache_data(ttl=3600 * 12, show_spinner=False)
+def fetch_seasonal(ticker, years):
+    try:
+        import yfinance as yf
+        df = yf.download(ticker, period=f"{years + 1}y", interval="1d",
+                         progress=False, auto_adjust=True)
+        if df.empty:
+            return None
+        close = df["Close"].copy()
+        close.index = pd.to_datetime(close.index)
+        pct = close.pct_change() * 100
+        doy  = close.index.dayofyear
+        year = close.index.year
+        tmp = pd.DataFrame({"pct": pct.values, "doy": doy, "year": year},
+                           index=close.index)
+        cutoff_year = close.index[-1].year - years
+        tmp = tmp[tmp["year"] > cutoff_year]
+        seasonal = tmp.groupby("doy")["pct"].mean().reset_index()
+        seasonal["cumsum"] = seasonal["pct"].cumsum()
+        mn, mx = seasonal["cumsum"].min(), seasonal["cumsum"].max()
+        seasonal["norm"] = 50.0 if mx == mn else (seasonal["cumsum"] - mn) / (mx - mn) * 100
+        return seasonal
+    except Exception:
+        return None
+
+sc1, sc2 = st.columns([2, 7])
+with sc1:
+    sel_name = st.selectbox(
+        "Komodita",
+        list(SEASONAL_TICKERS.keys()),
+        key="seasonal_commodity",
+        label_visibility="collapsed",
+    )
+
+ticker_s = SEASONAL_TICKERS[sel_name]
+
+with st.spinner(f"Načítám sezónní data pro {sel_name}…"):
+    seasonal_data = {y: fetch_seasonal(ticker_s, y) for y in SEASONAL_YEARS}
+
+current_year = datetime.now().year
+current_doy  = datetime.now().timetuple().tm_yday
+
+doy_to_date = {}
+for doy in range(1, 367):
+    try:
+        doy_to_date[doy] = datetime(current_year, 1, 1) + timedelta(days=doy - 1)
+    except Exception:
+        pass
+
+fig_s = go.Figure()
+
+for y in SEASONAL_YEARS:
+    data = seasonal_data.get(y)
+    if data is None or data.empty:
+        continue
+    xs = [doy_to_date[int(d)] for d in data["doy"] if int(d) in doy_to_date]
+    ys = data["norm"].tolist()[:len(xs)]
+    fig_s.add_trace(go.Scatter(
+        x=xs, y=ys,
+        mode="lines",
+        name=f"{y} let",
+        line=dict(color=SEASONAL_COLORS[y], width=2.5 if y == 5 else 1.5),
+        opacity=0.9,
+        hovertemplate=f"{y}r · %{{x|%d.%m}}: %{{y:.1f}}<extra></extra>",
+    ))
+
+today_dt = doy_to_date.get(current_doy)
+if today_dt:
+    fig_s.add_vline(
+        x=today_dt.timestamp() * 1000,
+        line_dash="dash", line_color="#5a6358", line_width=1,
+    )
+    fig_s.add_annotation(
+        x=today_dt, y=105,
+        text="dnes", showarrow=False,
+        font=dict(family="IBM Plex Mono", size=10, color="#5a6358"),
+        xanchor="center",
+    )
+
+fig_s.add_hrect(y0=80, y1=100, fillcolor="rgba(224,90,58,0.05)", line_width=0)
+fig_s.add_hrect(y0=0,  y1=20,  fillcolor="rgba(126,217,87,0.05)", line_width=0)
+
+fig_s.update_layout(
+    height=380,
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="#0d0f0e",
+    margin=dict(l=0, r=0, t=10, b=0),
+    hovermode="x unified",
+    legend=dict(
+        font=dict(family="IBM Plex Mono", size=10, color="#5a6358"),
+        bgcolor="rgba(0,0,0,0)", borderwidth=0,
+        orientation="h", y=1.05,
+    ),
+    hoverlabel=dict(
+        bgcolor="#131714", bordercolor="#2a2e2b",
+        font=dict(family="IBM Plex Mono", size=11, color="#e8e4dc"),
+    ),
+    xaxis=dict(
+        showgrid=True, gridcolor="#131714", color="#3a4038",
+        tickfont=dict(family="IBM Plex Mono", size=10, color="#3a4038"),
+        tickformat="%b", dtick="M1", ticklabelmode="period",
+        zeroline=False,
+    ),
+    yaxis=dict(
+        showgrid=True, gridcolor="#131714", color="#3a4038",
+        tickfont=dict(family="IBM Plex Mono", size=10, color="#3a4038"),
+        range=[-5, 110],
+        tickvals=[0, 20, 50, 80, 100],
+        ticktext=["0", "20", "50", "80", "100"],
+        zeroline=False,
+    ),
+)
+
+st.plotly_chart(fig_s, use_container_width=True, config={"displayModeBar": False})
+
+st.markdown(
+    "<div style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#3a4038;"
+    "display:flex;gap:20px;flex-wrap:wrap;margin-top:0.25rem'>"
+    "<span>Normalizováno 0–100 · kumulativní průměrný výnos v průběhu roku</span>"
+    "<span>Zdroj: yfinance · nearest futures · svislá linka = dnes</span>"
+    "</div>",
+    unsafe_allow_html=True,
+)
+
 
 # ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown(f"""
