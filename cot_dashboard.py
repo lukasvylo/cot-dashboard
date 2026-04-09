@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # ════════════════════════════════════════════════════════════════════
 # ⚙️  NASTAV TYTO DVĚ HODNOTY na svůj GitHub username a název repa
-GITHUB_USER = "lukasvylo"      # ← změň
+GITHUB_USER = "tvuj-github-username"      # ← změň
 GITHUB_REPO = "cot-dashboard"             # ← změň (název repozitáře)
 # ════════════════════════════════════════════════════════════════════
 
@@ -489,25 +489,30 @@ SEASONAL_COLORS = {2: "#e05a3a", 5: "#f0a030", 10: "#c8f5a0", 15: "#7ed957", 20:
 def fetch_seasonal(ticker, years):
     try:
         import yfinance as yf
-        df = yf.download(ticker, period=f"{years + 1}y", interval="1d",
-                         progress=False, auto_adjust=True)
-        if df.empty:
+        raw = yf.download(ticker, period=f"{years + 1}y", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw.empty:
             return None
-        close = df["Close"].copy()
+        # Flatten MultiIndex columns pokud existují
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = [c[0] for c in raw.columns]
+        close = raw["Close"].squeeze()
         close.index = pd.to_datetime(close.index)
-        pct = close.pct_change() * 100
-        doy  = close.index.dayofyear
-        year = close.index.year
-        tmp = pd.DataFrame({"pct": pct.values, "doy": doy, "year": year},
-                           index=close.index)
-        cutoff_year = close.index[-1].year - years
-        tmp = tmp[tmp["year"] > cutoff_year]
+        close = close.dropna()
+        pct  = close.pct_change() * 100
+        tmp  = pd.DataFrame({
+            "pct":  pct.values,
+            "doy":  close.index.dayofyear,
+            "year": close.index.year,
+        }, index=close.index)
+        cutoff_year = int(close.index[-1].year) - years
+        tmp = tmp[tmp["year"] > cutoff_year].dropna()
         seasonal = tmp.groupby("doy")["pct"].mean().reset_index()
         seasonal["cumsum"] = seasonal["pct"].cumsum()
         mn, mx = seasonal["cumsum"].min(), seasonal["cumsum"].max()
         seasonal["norm"] = 50.0 if mx == mn else (seasonal["cumsum"] - mn) / (mx - mn) * 100
         return seasonal
-    except Exception:
+    except Exception as e:
         return None
 
 sc1, sc2 = st.columns([2, 7])
